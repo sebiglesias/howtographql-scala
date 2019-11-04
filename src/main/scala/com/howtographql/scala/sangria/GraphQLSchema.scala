@@ -1,17 +1,19 @@
 package com.howtographql.scala.sangria
 
 import akka.http.scaladsl.model.DateTime
+import sangria.schema.{ListType, ObjectType}
 import models._
 import sangria.ast.StringValue
 import sangria.execution.deferred.{DeferredResolver, Fetcher, Relation, RelationIds}
-import sangria.schema.{Field, ListType, ObjectType}
 import sangria.schema._
 import sangria.macros.derive._
+import sangria.marshalling.sprayJson._
+import spray.json.DefaultJsonProtocol._
 
 object GraphQLSchema {
 
-  implicit val GraphQLDateTime: ScalarType[DateTime] = ScalarType[DateTime](//1
-    name = "DateTime",//2
+  implicit val GraphQLDateTime = ScalarType[DateTime](//1
+    "DateTime",//2
     coerceOutput = (dt, _) => dt.toString, //3
     coerceInput = { //4
       case StringValue(dt, _, _ ) => DateTime.fromIsoDateTimeString(dt).toRight(DateTimeCoerceViolation)
@@ -30,7 +32,6 @@ object GraphQLSchema {
     )
   )
 
-  // -------------- Start Object Types Definitions --------------------------
   lazy val LinkType: ObjectType[Unit, Link] = deriveObjectType[Unit, Link](
     Interfaces(IdentifiableType),
     ReplaceField("createdAt", Field("createdAt", GraphQLDateTime, resolve = _.value.createdAt)),
@@ -47,7 +48,9 @@ object GraphQLSchema {
     AddFields(
       Field("links", ListType(LinkType),
         resolve = c =>  linksFetcher.deferRelSeq(linkByUserRel, c.value.id)),
-      Field("votes", ListType(VoteType), resolve = c =>  votesFetcher.deferRelSeq(voteByUserRel, c.value.id))
+      Field("votes", ListType(VoteType),
+        resolve = c =>  votesFetcher.deferRelSeq(voteByUserRel, c.value.id))
+
     )
   )
 
@@ -58,12 +61,48 @@ object GraphQLSchema {
     AddFields(Field("link",  LinkType, resolve = c => linksFetcher.defer(c.value.linkId)))
   )
 
-  val linkByUserRel: Relation[Link, Link, Int] = Relation[Link, Int]("byUser", l => Seq(l.postedBy))
-  val voteByUserRel = Relation[Vote, Int]("byUser", v => Seq(v.userId))
+  implicit val authProviderEmailFormat = jsonFormat2(AuthProviderEmail)
+  implicit val authProviderSignupDataFormat = jsonFormat1(AuthProviderSignupData)
+
+  val UrlArg = Argument("url", StringType)
+  val DescArg = Argument("description", StringType)
+  val PostedByArg = Argument("postedById", IntType)
+  val LinkIdArg = Argument("linkId", IntType)
+  val UserIdArg = Argument("userId", IntType)
+
+  implicit val AuthProviderEmailInputType: InputObjectType[AuthProviderEmail] = deriveInputObjectType[AuthProviderEmail](
+    InputObjectTypeName("AUTH_PROVIDER_EMAIL")
+  )
+
+  lazy val AuthProviderSignupDataInputType: InputObjectType[AuthProviderSignupData] = deriveInputObjectType[AuthProviderSignupData]()
+
+
+  val NameArg = Argument("name", StringType)
+  val AuthProviderArg = Argument("authProvider", AuthProviderSignupDataInputType)
+
+  val Mutation = ObjectType(
+    "Mutation",
+    fields[MyContext, Unit](
+      Field("createUser",
+        UserType,
+        arguments = NameArg :: AuthProviderArg :: Nil,
+        resolve = c => c.ctx.dao.createUser(c.arg(NameArg), c.arg(AuthProviderArg))
+      ),
+      Field("createLink",
+        LinkType,
+        arguments = UrlArg :: DescArg :: PostedByArg :: Nil,
+        resolve = c => c.ctx.dao.createLink(c.arg(UrlArg), c.arg(DescArg), c.arg(PostedByArg))),
+      Field("createVote",
+        VoteType,
+        arguments = LinkIdArg :: UserIdArg :: Nil,
+        resolve = c => c.ctx.dao.createVote(c.arg(LinkIdArg), c.arg(UserIdArg)))
+    )
+  )
+
+
+  val linkByUserRel = Relation[Link, Int]("byUser", l => Seq(l.postedBy))
   val voteByLinkRel = Relation[Vote, Int]("byLink", v => Seq(v.linkId))
-
-
-  // ------------------- Start Fetchers -----------------------------
+  val voteByUserRel = Relation[Vote, Int]("byUser", v => Seq(v.userId))
 
   val linksFetcher = Fetcher.rel(
     (ctx: MyContext, ids: Seq[Int]) => ctx.dao.getLinks(ids),
@@ -84,8 +123,6 @@ object GraphQLSchema {
   val Id = Argument("id", IntType)
   val Ids = Argument("ids", ListInputType(IntType))
 
-  // ------------------- Query Type --------------------------------
-
   val QueryType = ObjectType(
     "Query",
     fields[MyContext, Unit](
@@ -103,28 +140,18 @@ object GraphQLSchema {
         arguments = Ids :: Nil,
         resolve = c => linksFetcher.deferSeq(c.arg(Ids))
       ),
-      Field("user",
-        OptionType(UserType),
-        arguments = Id :: Nil,
-        resolve = c => usersFetcher.deferOpt(c.arg(Id))
-      ),
       Field("users",
         ListType(UserType),
         arguments = Ids :: Nil,
         resolve = c => usersFetcher.deferSeq(c.arg(Ids))
       ),
-      Field("vote",
-        OptionType(VoteType),
-        arguments = Id :: Nil,
-        resolve = c => votesFetcher.deferOpt(c.arg(Id))
-      ),
       Field("votes",
         ListType(VoteType),
         arguments = Ids :: Nil,
         resolve = c => votesFetcher.deferSeq(c.arg(Ids))
-      ),
+      )
     )
   )
 
-  val SchemaDefinition = Schema(QueryType)
+  val SchemaDefinition = Schema(QueryType, Some(Mutation))
 }
