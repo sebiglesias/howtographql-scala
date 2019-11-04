@@ -1,5 +1,6 @@
 package com.howtographql.scala.sangria
 
+import com.howtographql.scala.models._
 import slick.jdbc.H2Profile.api._
 
 import scala.concurrent.duration._
@@ -12,10 +13,26 @@ object DBSchema {
   /**
     * Load schema and populate sample data withing this Sequence od DBActions
     */
+  class LinksTable(tag: Tag) extends Table[Link](tag, "LINKS"){
+
+    def id = column[Int]("ID", O.PrimaryKey, O.AutoInc)
+    def url = column[String]("URL")
+    def description = column[String]("DESCRIPTION")
+
+    def * = (id, url, description).mapTo[Link]
+  }
+  val Links = TableQuery[LinksTable]
+
+
   val databaseSetup = DBIO.seq(
+    Links.schema.create,
 
+    Links forceInsertAll Seq(
+      Link(1, "http://howtographql.com", "Awesome community driven GraphQL tutorial"),
+      Link(2, "http://graphql.org", "Official GraphQL web page"),
+      Link(3, "https://facebook.github.io/graphql/", "GraphQL specification")
+    )
   )
-
 
   def createDatabase: DAO = {
     val db = Database.forConfig("h2mem")
