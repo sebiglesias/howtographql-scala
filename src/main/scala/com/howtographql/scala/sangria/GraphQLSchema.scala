@@ -1,6 +1,7 @@
 package com.howtographql.scala.sangria
 
 import com.howtographql.scala.models._
+import sangria.execution.deferred.{DeferredResolver, Fetcher, HasId}
 import sangria.schema.{Field, ListType, ObjectType}
 // #
 import sangria.schema._
@@ -10,18 +11,17 @@ object GraphQLSchema {
 
 
   // definition of ObjectType for our Link class
-  val LinkType: ObjectType[Unit, Link] = ObjectType[Unit, Link](
-    "Link",
-    fields[Unit, Link](
-      Field("id", IntType, resolve = _.value.id),
-      Field("url", StringType, resolve = _.value.url),
-      Field("description", StringType, resolve = _.value.description)
-    )
-  )
+  val LinkType: ObjectType[Unit, Link] = deriveObjectType[Unit, Link]()
+  implicit val linkHasId: HasId[Link, Int] = HasId[Link, Int](_.id)
 
   val Id = Argument("id", IntType)
   val Ids = Argument("ids", ListInputType(IntType))
 
+  val linksFetcher = Fetcher(
+    (ctx: MyContext, ids: Seq[Int]) => ctx.dao.getLinks(ids)
+  )
+
+  val Resolver: DeferredResolver[MyContext] = DeferredResolver.fetchers(linksFetcher)
 
   // 2
   val QueryType = ObjectType(
@@ -31,15 +31,15 @@ object GraphQLSchema {
         ListType(LinkType),
         resolve = c => c.ctx.dao.allLinks
       ),
-      Field("link", //1
-        OptionType(LinkType), //2
-        arguments = Id :: Nil, //3
-        resolve = c => c.ctx.dao.getLink(c.arg(Id)) //4
+      Field("link",
+        OptionType(LinkType),
+        arguments = Id :: Nil,
+        resolve = c => linksFetcher.deferOpt(c.arg(Id))
       ),
       Field("links", //1
         ListType(LinkType), //2
         arguments = Ids :: Nil, //3
-        resolve = c => c.ctx.dao.getLinks(c.arg(Ids)) //4
+        resolve = c => linksFetcher.deferSeq(c.arg(Ids)) //4
       )
     )
   )
