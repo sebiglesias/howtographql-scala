@@ -1,29 +1,74 @@
 package com.howtographql.scala.sangria
 
-import com.howtographql.scala.models._
-import sangria.execution.deferred.{DeferredResolver, Fetcher, HasId}
+import akka.http.scaladsl.model.DateTime
+import models._
+import sangria.ast.StringValue
+import sangria.execution.deferred.{DeferredResolver, Fetcher}
 import sangria.schema.{Field, ListType, ObjectType}
-// #
 import sangria.schema._
 import sangria.macros.derive._
 
 object GraphQLSchema {
 
+  implicit val GraphQLDateTime: ScalarType[DateTime] = ScalarType[DateTime](//1
+    name = "DateTime",//2
+    coerceOutput = (dt, _) => dt.toString, //3
+    coerceInput = { //4
+      case StringValue(dt, _, _ ) => DateTime.fromIsoDateTimeString(dt).toRight(DateTimeCoerceViolation)
+      case _ => Left(DateTimeCoerceViolation)
+    },
+    coerceUserInput = { //5
+      case s: String => DateTime.fromIsoDateTimeString(s).toRight(DateTimeCoerceViolation)
+      case _ => Left(DateTimeCoerceViolation)
+    }
+  )
 
-  // definition of ObjectType for our Link class
-  val LinkType: ObjectType[Unit, Link] = deriveObjectType[Unit, Link]()
-  implicit val linkHasId: HasId[Link, Int] = HasId[Link, Int](_.id)
+  val IdentifiableType = InterfaceType(
+    "Identifiable",
+    fields[Unit, Identifiable](
+      Field("id", IntType, resolve = _.value.id)
+    )
+  )
 
-  val Id = Argument("id", IntType)
-  val Ids = Argument("ids", ListInputType(IntType))
+  // -------------- Start Object Types Definitions --------------------------
+  val LinkType: ObjectType[Unit, Link] = deriveObjectType[Unit, Link](
+    Interfaces(IdentifiableType),
+    ReplaceField("createdAt", Field("createdAt", GraphQLDateTime, resolve = _.value.createdAt))
+
+  )
+
+  val UserType: ObjectType[Unit, User] = deriveObjectType[Unit, User](
+    Interfaces(IdentifiableType)
+  )
+
+  val VoteType: ObjectType[Unit, Vote] = deriveObjectType[Unit, Vote](
+    Interfaces(IdentifiableType)
+  )
+  // -------------- End Object Types Definitions ---------------------------
+
+
+  // ------------------- Start Fetchers -----------------------------
 
   val linksFetcher = Fetcher(
     (ctx: MyContext, ids: Seq[Int]) => ctx.dao.getLinks(ids)
   )
 
-  val Resolver: DeferredResolver[MyContext] = DeferredResolver.fetchers(linksFetcher)
+  val usersFetcher = Fetcher(
+    (ctx: MyContext, ids: Seq[Int]) => ctx.dao.getUsers(ids)
+  )
 
-  // 2
+  val votesFetcher = Fetcher(
+    (ctx: MyContext, ids: Seq[Int]) => ctx.dao.getVotes(ids)
+  )
+
+  // ------------------- End Fetchers -----------------------------
+
+  val Resolver: DeferredResolver[MyContext] = DeferredResolver.fetchers(linksFetcher, usersFetcher, votesFetcher)
+
+  val Id = Argument("id", IntType)
+  val Ids = Argument("ids", ListInputType(IntType))
+
+  // ------------------- Query Type --------------------------------
   val QueryType = ObjectType(
     "Query",
     fields[MyContext, Unit](
@@ -36,14 +81,33 @@ object GraphQLSchema {
         arguments = Id :: Nil,
         resolve = c => linksFetcher.deferOpt(c.arg(Id))
       ),
-      Field("links", //1
-        ListType(LinkType), //2
-        arguments = Ids :: Nil, //3
-        resolve = c => linksFetcher.deferSeq(c.arg(Ids)) //4
-      )
+      Field("links",
+        ListType(LinkType),
+        arguments = Ids :: Nil,
+        resolve = c => linksFetcher.deferSeq(c.arg(Ids))
+      ),
+      Field("user",
+        OptionType(UserType),
+        arguments = Id :: Nil,
+        resolve = c => usersFetcher.deferOpt(c.arg(Id))
+      ),
+      Field("users",
+        ListType(UserType),
+        arguments = Ids :: Nil,
+        resolve = c => usersFetcher.deferSeq(c.arg(Ids))
+      ),
+      Field("vote",
+        OptionType(VoteType),
+        arguments = Id :: Nil,
+        resolve = c => votesFetcher.deferOpt(c.arg(Id))
+      ),
+      Field("votes",
+        ListType(VoteType),
+        arguments = Ids :: Nil,
+        resolve = c => votesFetcher.deferSeq(c.arg(Ids))
+      ),
     )
   )
 
-  // 3
   val SchemaDefinition = Schema(QueryType)
 }
