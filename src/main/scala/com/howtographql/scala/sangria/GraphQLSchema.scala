@@ -7,12 +7,11 @@ import sangria.ast.StringValue
 import sangria.execution.deferred.{DeferredResolver, Fetcher, Relation, RelationIds}
 import sangria.schema._
 import sangria.macros.derive._
-import sangria.marshalling.sprayJson._
-import spray.json.DefaultJsonProtocol._
+import spray.json.RootJsonFormat
 
 object GraphQLSchema {
 
-  implicit val GraphQLDateTime = ScalarType[DateTime](//1
+  implicit val GraphQLDateTime: ScalarType[DateTime] = ScalarType[DateTime](//1
     "DateTime",//2
     coerceOutput = (dt, _) => dt.toString, //3
     coerceInput = { //4
@@ -61,14 +60,11 @@ object GraphQLSchema {
     AddFields(Field("link",  LinkType, resolve = c => linksFetcher.defer(c.value.linkId)))
   )
 
-  implicit val authProviderEmailFormat = jsonFormat2(AuthProviderEmail)
-  implicit val authProviderSignupDataFormat = jsonFormat1(AuthProviderSignupData)
+  import sangria.marshalling.sprayJson._
+  import spray.json.DefaultJsonProtocol._
 
-  val UrlArg = Argument("url", StringType)
-  val DescArg = Argument("description", StringType)
-  val PostedByArg = Argument("postedById", IntType)
-  val LinkIdArg = Argument("linkId", IntType)
-  val UserIdArg = Argument("userId", IntType)
+  implicit val authProviderEmailFormat: RootJsonFormat[AuthProviderEmail] = jsonFormat2(AuthProviderEmail)
+  implicit val authProviderSignupDataFormat: RootJsonFormat[AuthProviderSignupData] = jsonFormat1(AuthProviderSignupData)
 
   implicit val AuthProviderEmailInputType: InputObjectType[AuthProviderEmail] = deriveInputObjectType[AuthProviderEmail](
     InputObjectTypeName("AUTH_PROVIDER_EMAIL")
@@ -76,35 +72,11 @@ object GraphQLSchema {
 
   lazy val AuthProviderSignupDataInputType: InputObjectType[AuthProviderSignupData] = deriveInputObjectType[AuthProviderSignupData]()
 
+  val linkByUserRel: Relation[Link, Link, Int] = Relation[Link, Int]("byUser", l => Seq(l.postedBy))
+  val voteByLinkRel: Relation[Vote, Vote, Int] = Relation[Vote, Int]("byLink", v => Seq(v.linkId))
+  val voteByUserRel: Relation[Vote, Vote, Int] = Relation[Vote, Int]("byUser", v => Seq(v.userId))
 
-  val NameArg = Argument("name", StringType)
-  val AuthProviderArg = Argument("authProvider", AuthProviderSignupDataInputType)
-
-  val Mutation = ObjectType(
-    "Mutation",
-    fields[MyContext, Unit](
-      Field("createUser",
-        UserType,
-        arguments = NameArg :: AuthProviderArg :: Nil,
-        resolve = c => c.ctx.dao.createUser(c.arg(NameArg), c.arg(AuthProviderArg))
-      ),
-      Field("createLink",
-        LinkType,
-        arguments = UrlArg :: DescArg :: PostedByArg :: Nil,
-        resolve = c => c.ctx.dao.createLink(c.arg(UrlArg), c.arg(DescArg), c.arg(PostedByArg))),
-      Field("createVote",
-        VoteType,
-        arguments = LinkIdArg :: UserIdArg :: Nil,
-        resolve = c => c.ctx.dao.createVote(c.arg(LinkIdArg), c.arg(UserIdArg)))
-    )
-  )
-
-
-  val linkByUserRel = Relation[Link, Int]("byUser", l => Seq(l.postedBy))
-  val voteByLinkRel = Relation[Vote, Int]("byLink", v => Seq(v.linkId))
-  val voteByUserRel = Relation[Vote, Int]("byUser", v => Seq(v.userId))
-
-  val linksFetcher = Fetcher.rel(
+  val linksFetcher: Fetcher[MyContext, Link, Link, Int] = Fetcher.rel(
     (ctx: MyContext, ids: Seq[Int]) => ctx.dao.getLinks(ids),
     (ctx: MyContext, ids: RelationIds[Link]) => ctx.dao.getLinksByUserIds(ids(linkByUserRel))
   )
@@ -113,12 +85,13 @@ object GraphQLSchema {
     (ctx: MyContext, ids: Seq[Int]) => ctx.dao.getUsers(ids)
   )
 
-  val votesFetcher = Fetcher.rel(
+  val votesFetcher: Fetcher[MyContext, Vote, Vote, Int] = Fetcher.rel(
     (ctx: MyContext, ids: Seq[Int]) => ctx.dao.getVotes(ids),
     (ctx: MyContext, ids: RelationIds[Vote]) => ctx.dao.getVotesByRelationIds(ids)
   )
 
   val Resolver: DeferredResolver[MyContext] = DeferredResolver.fetchers(linksFetcher, usersFetcher, votesFetcher)
+
 
   val Id = Argument("id", IntType)
   val Ids = Argument("ids", ListInputType(IntType))
@@ -126,10 +99,7 @@ object GraphQLSchema {
   val QueryType = ObjectType(
     "Query",
     fields[MyContext, Unit](
-      Field("allLinks",
-        ListType(LinkType),
-        resolve = c => c.ctx.dao.allLinks
-      ),
+      Field("allLinks", ListType(LinkType), resolve = c => c.ctx.dao.allLinks),
       Field("link",
         OptionType(LinkType),
         arguments = Id :: Nil,
@@ -142,13 +112,51 @@ object GraphQLSchema {
       ),
       Field("users",
         ListType(UserType),
-        arguments = Ids :: Nil,
+        arguments = List(Ids),
         resolve = c => usersFetcher.deferSeq(c.arg(Ids))
       ),
       Field("votes",
         ListType(VoteType),
-        arguments = Ids :: Nil,
+        arguments = List(Ids),
         resolve = c => votesFetcher.deferSeq(c.arg(Ids))
+      )
+    )
+  )
+
+  val NameArg = Argument("name", StringType)
+  val AuthProviderArg = Argument("authProvider", AuthProviderSignupDataInputType)
+  val UrlArg = Argument("url", StringType)
+  val DescArg = Argument("description", StringType)
+  val PostedByArg = Argument("postedById", IntType)
+  val LinkIdArg = Argument("linkId", IntType)
+  val UserIdArg = Argument("userId", IntType)
+  val EmailArg = Argument("email", StringType)
+  val PasswordArg = Argument("password", StringType)
+
+  val Mutation = ObjectType(
+    "Mutation",
+    fields[MyContext, Unit](
+      Field("createUser",
+        UserType,
+        arguments = NameArg :: AuthProviderArg :: Nil,
+        resolve = c => c.ctx.dao.createUser(c.arg(NameArg), c.arg(AuthProviderArg))
+      ),
+      Field("createLink",
+        LinkType,
+        arguments = UrlArg :: DescArg :: PostedByArg :: Nil,
+        tags = Authorized :: Nil,
+        resolve = c => c.ctx.dao.createLink(c.arg(UrlArg), c.arg(DescArg), c.arg(PostedByArg))),
+      Field("createVote",
+        VoteType,
+        arguments = LinkIdArg :: UserIdArg :: Nil,
+        resolve = c => c.ctx.dao.createVote(c.arg(LinkIdArg), c.arg(UserIdArg))),
+      Field("login",
+        UserType,
+        arguments = EmailArg :: PasswordArg :: Nil,
+        resolve = ctx => UpdateCtx(
+          ctx.ctx.login(ctx.arg(EmailArg), ctx.arg(PasswordArg))){ user =>
+          ctx.ctx.copy(currentUser = Some(user))
+        }
       )
     )
   )

@@ -1,9 +1,8 @@
 package com.howtographql.scala.sangria
 
 import akka.http.scaladsl.model.DateTime
-import sangria.ast.OperationType.Mutation
+import sangria.execution.FieldTag
 import sangria.execution.deferred.HasId
-import sangria.schema.Schema
 import sangria.validation.Violation
 
 package object models {
@@ -30,4 +29,9 @@ package object models {
 
   case class AuthProviderSignupData(email: AuthProviderEmail)
 
+  case class AuthenticationException(message: String) extends Exception(message)
+
+  case class AuthorizationException(message: String) extends Exception(message)
+
+  case object Authorized extends FieldTag
 }
